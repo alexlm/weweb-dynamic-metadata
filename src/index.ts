@@ -80,7 +80,7 @@ export default {
       	console.log("Page data detected:", url.pathname);
 	console.log("Referer:", referer);
 
-      // Fetch the source data content - FIXED: Don't pass the request object
+      // Fetch the source data content
       const sourceResponse = await fetch(`${domainSource}${url.pathname}`);
       let sourceData = await sourceResponse.json();
 
@@ -129,8 +129,8 @@ export default {
     // If the URL does not match any patterns, fetch and return the original content
     console.log("Fetching original content for:", url.pathname);
     
-    // FIXED: This is the main issue - don't create a new Request with the original request
-    // Just fetch the URL directly
+    // FIXED: Don't create a new Request with the original request headers
+    // Just fetch the URL directly to avoid infinite loops
     const sourceUrl = `${domainSource}${url.pathname}${url.search}`;
     const sourceResponse = await fetch(sourceUrl);
 
