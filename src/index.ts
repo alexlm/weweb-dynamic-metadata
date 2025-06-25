@@ -53,8 +53,8 @@ export default {
     if (patternConfig) {
       console.log("Dynamic page detected:", url.pathname);
 
-      // Fetch the source page content - FIXED: Don't pass the request object
-      let source = await fetch(`${domainSource}${url.pathname}${url.search}`);
+      // Fetch the source page content
+      let source = await fetch(`${domainSource}${url.pathname}`);
 
       // Remove "X-Robots-Tag" from the headers
       const sourceHeaders = new Headers(source.headers);
@@ -128,11 +128,9 @@ export default {
 
     // If the URL does not match any patterns, fetch and return the original content
     console.log("Fetching original content for:", url.pathname);
-    
-    // FIXED: Don't create a new Request with the original request headers
-    // Just fetch the URL directly to avoid infinite loops
-    const sourceUrl = `${domainSource}${url.pathname}${url.search}`;
-    const sourceResponse = await fetch(sourceUrl);
+    const sourceUrl = new URL(`${domainSource}${url.pathname}`);
+    const sourceRequest = new Request(sourceUrl, request);
+    const sourceResponse = await fetch(sourceRequest);
 
     // Create a new response without the "X-Robots-Tag" header
     const modifiedHeaders = new Headers(sourceResponse.headers);
