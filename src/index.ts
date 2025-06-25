@@ -53,8 +53,8 @@ export default {
     if (patternConfig) {
       console.log("Dynamic page detected:", url.pathname);
 
-      // Fetch the source page content
-      let source = await fetch(`${domainSource}${url.pathname}`);
+      // Fetch the source page content - FIXED: Don't pass the request object
+      let source = await fetch(`${domainSource}${url.pathname}${url.search}`);
 
       // Remove "X-Robots-Tag" from the headers
       const sourceHeaders = new Headers(source.headers);
@@ -128,9 +128,17 @@ export default {
 
     // If the URL does not match any patterns, fetch and return the original content
     console.log("Fetching original content for:", url.pathname);
-    const sourceUrl = new URL(`${domainSource}${url.pathname}`);
-    const sourceRequest = new Request(sourceUrl, request);
-    const sourceResponse = await fetch(sourceRequest);
+    
+    // Handle all requests - including assets, API calls, etc.
+    const sourceUrl = `${domainSource}${url.pathname}${url.search}`;
+    
+    // For specific file types, pass through directly without modification
+    if (url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|json)$/i)) {
+      console.log("Asset request, passing through:", url.pathname);
+      return fetch(sourceUrl);
+    }
+    
+    const sourceResponse = await fetch(sourceUrl);
 
     // Create a new response without the "X-Robots-Tag" header
     const modifiedHeaders = new Headers(sourceResponse.headers);
