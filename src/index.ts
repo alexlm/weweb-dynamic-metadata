@@ -1,3 +1,4 @@
+// index.ts
 import { config } from '../config.js';
 
 export default {
@@ -10,7 +11,7 @@ export default {
 
     // Parse the request URL
     const url = new URL(request.url);
-    const referer = request.headers.get('Referer')
+    const referer = request.headers.get('Referer');
 
     // Function to get the pattern configuration that matches the URL
     function getPatternConfig(url) {
@@ -33,15 +34,15 @@ export default {
     async function requestMetadata(url, metaDataEndpoint) {
       // Remove any trailing slash from the URL
       const trimmedUrl = url.endsWith('/') ? url.slice(0, -1) : url;
-    
+
       // Split the trimmed URL by '/' and get the last part: The id
       const parts = trimmedUrl.split('/');
       const id = parts[parts.length - 1];
-    
+
       // Replace the placeholder in metaDataEndpoint with the actual id
       const placeholderPattern = /{([^}]+)}/;
       const metaDataEndpointWithId = metaDataEndpoint.replace(placeholderPattern, id);
-    
+
       // Fetch metadata from the API endpoint
       const metaDataResponse = await fetch(metaDataEndpointWithId);
       const metadata = await metaDataResponse.json();
@@ -61,7 +62,7 @@ export default {
       sourceHeaders.delete('X-Robots-Tag');
       source = new Response(source.body, {
         status: source.status,
-        headers: sourceHeaders
+        headers: sourceHeaders,
       });
 
       const metadata = await requestMetadata(url.pathname, patternConfig.metaDataEndpoint);
@@ -71,14 +72,12 @@ export default {
       const customHeaderHandler = new CustomHeaderHandler(metadata);
 
       // Transform the source HTML with the custom headers
-      return new HTMLRewriter()
-        .on('*', customHeaderHandler)
-        .transform(source);
+      return new HTMLRewriter().on('*', customHeaderHandler).transform(source);
 
-    // Handle page data requests for the WeWeb app
+      // Handle page data requests for the WeWeb app
     } else if (isPageData(url.pathname)) {
-      	console.log("Page data detected:", url.pathname);
-	console.log("Referer:", referer);
+      console.log("Page data detected:", url.pathname);
+      console.log("Referer:", referer);
 
       // Fetch the source data content
       const sourceResponse = await fetch(`${domainSource}${url.pathname}`);
@@ -89,7 +88,10 @@ export default {
       if (pathname !== null) {
         const patternConfigForPageData = getPatternConfig(pathname);
         if (patternConfigForPageData) {
-          const metadata = await requestMetadata(pathname, patternConfigForPageData.metaDataEndpoint);
+          const metadata = await requestMetadata(
+            pathname,
+            patternConfigForPageData.metaDataEndpoint
+          );
           console.log("Metadata fetched:", metadata);
 
           // Ensure nested objects exist in the source data
@@ -117,10 +119,10 @@ export default {
             sourceData.page.meta.keywords.en = metadata.keywords;
           }
 
-	  console.log("returning file: ", JSON.stringify(sourceData));
+          console.log("returning file: ", JSON.stringify(sourceData));
           // Return the modified JSON object
           return new Response(JSON.stringify(sourceData), {
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json' },
           });
         }
       }
@@ -140,81 +142,128 @@ export default {
       status: sourceResponse.status,
       headers: modifiedHeaders,
     });
-  }
+  },
 };
 
 // CustomHeaderHandler class to modify HTML content based on metadata
 class CustomHeaderHandler {
   constructor(metadata) {
     this.metadata = metadata;
+    this.viewportMetaFound = false;
+    this.statusBarMetaFound = false;
+    this.appleWebAppCapableFound = false;
   }
 
   element(element) {
     // Replace the <title> tag content
-    if (element.tagName == "title") {
+    if (element.tagName === 'title') {
       console.log('Replacing title tag content');
       element.setInnerContent(this.metadata.title);
     }
+
     // Replace meta tags content
-    if (element.tagName == "meta") {
-      const name = element.getAttribute("name");
+    if (element.tagName === 'meta') {
+      const name = element.getAttribute('name');
+
+      if (name === 'viewport') {
+        element.setAttribute('content', 'width=device-width, initial-scale=1, viewport-fit=cover');
+        this.viewportMetaFound = true;
+      } else if (name === 'apple-mobile-web-app-status-bar-style') {
+        element.setAttribute('content', 'black');
+        this.statusBarMetaFound = true;
+      } else if (name === 'apple-mobile-web-app-capable') {
+        element.setAttribute('content', 'yes');
+        this.appleWebAppCapableFound = true;
+      }
+
       switch (name) {
-        case "title":
-          element.setAttribute("content", this.metadata.title);
+        case 'title':
+          element.setAttribute('content', this.metadata.title);
           break;
-        case "description":
-          element.setAttribute("content", this.metadata.description);
+        case 'description':
+          element.setAttribute('content', this.metadata.description);
           break;
-        case "image":
-          element.setAttribute("content", this.metadata.image);
+        case 'image':
+          element.setAttribute('content', this.metadata.image);
           break;
-        case "keywords":
-          element.setAttribute("content", this.metadata.keywords);
+        case 'keywords':
+          element.setAttribute('content', this.metadata.keywords);
           break;
-        case "twitter:title":
-          element.setAttribute("content", this.metadata.title);
+        case 'twitter:title':
+          element.setAttribute('content', this.metadata.title);
           break;
-        case "twitter:description":
-          element.setAttribute("content", this.metadata.description);
+        case 'twitter:description':
+          element.setAttribute('content', this.metadata.description);
           break;
       }
 
-      const itemprop = element.getAttribute("itemprop");
+      const itemprop = element.getAttribute('itemprop');
       switch (itemprop) {
-        case "name":
-          element.setAttribute("content", this.metadata.title);
+        case 'name':
+          element.setAttribute('content', this.metadata.title);
           break;
-        case "description":
-          element.setAttribute("content", this.metadata.description);
+        case 'description':
+          element.setAttribute('content', this.metadata.description);
           break;
-        case "image":
-          element.setAttribute("content", this.metadata.image);
+        case 'image':
+          element.setAttribute('content', this.metadata.image);
           break;
       }
 
-      const type = element.getAttribute("property");
-      switch (type) {
-        case "og:title":
+      const property = element.getAttribute('property');
+      switch (property) {
+        case 'og:title':
           console.log('Replacing og:title');
-          element.setAttribute("content", this.metadata.title);
+          element.setAttribute('content', this.metadata.title);
           break;
-        case "og:description":
+        case 'og:description':
           console.log('Replacing og:description');
-          element.setAttribute("content", this.metadata.description);
+          element.setAttribute('content', this.metadata.description);
           break;
-        case "og:image":
+        case 'og:image':
           console.log('Replacing og:image');
-          element.setAttribute("content", this.metadata.image);
+          element.setAttribute('content', this.metadata.image);
           break;
       }
 
       // Remove the noindex meta tag
-      const robots = element.getAttribute("name");
-      if (robots === "robots" && element.getAttribute("content") === "noindex") {
+      if (name === 'robots' && element.getAttribute('content') === 'noindex') {
         console.log('Removing noindex tag');
         element.remove();
       }
-	    
+    }
+
+    // Replace favicon URL and process link elements
+    if (element.tagName === 'link') {
+      const rel = element.getAttribute('rel');
+      console.log(`Processing link element with rel: ${rel}`);
+      if (rel === 'icon' || rel === 'shortcut icon') {
+        console.log('Replacing favicon URL');
+        element.setAttribute('href', `${config.domainSource}/favicon.ico?_wwcv=150`);
+      }
+    }
+  }
+
+  end(element) {
+    if (element.tagName === 'head') {
+      if (!this.viewportMetaFound) {
+        element.append(
+          `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">`,
+          { html: true }
+        );
+      }
+      if (!this.appleWebAppCapableFound) {
+        element.append(
+          `<meta name="apple-mobile-web-app-capable" content="yes">`,
+          { html: true }
+        );
+      }
+      if (!this.statusBarMetaFound) {
+        element.append(
+          `<meta name="apple-mobile-web-app-status-bar-style" content="black">`,
+          { html: true }
+        );
+      }
     }
   }
 }
