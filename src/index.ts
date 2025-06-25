@@ -131,16 +131,19 @@ export default {
     
     // Handle all requests - including assets, API calls, etc.
     const sourceUrl = `${domainSource}${url.pathname}${url.search}`;
-    
-    // For specific file types, pass through directly without modification
-    if (url.pathname.match(/\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|json)$/i)) {
-      console.log("Asset request, passing through:", url.pathname);
-      return fetch(sourceUrl);
-    }
-    
     const sourceResponse = await fetch(sourceUrl);
+    
+    // Get the content type
+    const contentType = sourceResponse.headers.get('Content-Type') || '';
+    
+    // Only remove X-Robots-Tag for HTML responses
+    // For CSS, JS, and other assets, return them as-is
+    if (!contentType.includes('text/html')) {
+      console.log("Non-HTML content, passing through as-is:", url.pathname, contentType);
+      return sourceResponse;
+    }
 
-    // Create a new response without the "X-Robots-Tag" header
+    // For HTML responses, remove the X-Robots-Tag header
     const modifiedHeaders = new Headers(sourceResponse.headers);
     modifiedHeaders.delete('X-Robots-Tag');
 
