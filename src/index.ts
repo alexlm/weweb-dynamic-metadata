@@ -193,28 +193,152 @@ export default {
               <script>
                 (function() {
                   const customTitle = ${JSON.stringify(titleMetadata.title)};
-                  // Set title immediately
+                  const metaDataEndpoint = ${JSON.stringify(patternConfig.metaDataEndpoint)};
+                  const pattern = ${JSON.stringify(patternConfig.pattern)};
+                  
+                  // Set initial title
                   document.title = customTitle;
                   
-                  // Override the title property to prevent changes
+                  // Function to fetch metadata for a given path
+                  async function fetchTitleForPath(pathname) {
+                    try {
+                      // Check if the path matches our pattern
+                      const regex = new RegExp(pattern);
+                      const testPath = pathname + (pathname.endsWith('/') ? '' : '/');
+                      if (!regex.test(testPath)) {
+                        return null;
+                      }
+                      
+                      // Extract ID from path
+                      const trimmedUrl = pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+                      const parts = trimmedUrl.split('/');
+                      const id = parts[parts.length - 1];
+                      
+                      // Build metadata URL
+                      const metaUrl = metaDataEndpoint.replace(/{[^}]+}/, id);
+                      
+                      // Fetch metadata
+                      const response = await fetch(metaUrl);
+                      const metadata = await response.json();
+                      return metadata.title;
+                    } catch (e) {
+                      console.error('Error fetching title:', e);
+                      return null;
+                    }
+                  }
+                  
+                  // Store the original setter
+                  const originalTitleDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'title');
+                  const originalSet = originalTitleDescriptor.set;
+                  
+                  // Track current path
+                  let currentPath = window.location.pathname;
+                  
+                  // Override title setter
                   Object.defineProperty(document, 'title', {
-                    get: function() { return customTitle; },
-                    set: function(newTitle) { 
-                      console.log('Attempted to set title to:', newTitle, 'but keeping:', customTitle);
-                      return customTitle; 
+                    get: originalTitleDescriptor.get,
+                    set: function(newTitle) {
+                      // Check if we're on a recipe page
+                      const regex = new RegExp(pattern);
+                      const testPath = window.location.pathname + (window.location.pathname.endsWith('/') ? '' : '/');
+                      
+                      if (regex.test(testPath)) {
+                        // If we're still on the same path, keep our custom title
+                        if (window.location.pathname === currentPath) {
+                          console.log('Keeping custom title:', document.title);
+                          return;
+                        }
+                        
+                        // Path changed, fetch new title
+                        currentPath = window.location.pathname;
+                        fetchTitleForPath(currentPath).then(title => {
+                          if (title) {
+                            originalSet.call(document, title);
+                          } else {
+                            originalSet.call(document, newTitle);
+                          }
+                        });
+                      } else {
+                        // Not a recipe page, use the default title
+                        currentPath = window.location.pathname;
+                        originalSet.call(document, newTitle);
+                      }
                     }
                   });
                   
-                  // Also watch for changes with MutationObserver as a backup
-                  const titleElement = document.querySelector('title');
-                  if (titleElement) {
-                    const observer = new MutationObserver(function() {
-                      if (titleElement.textContent !== customTitle) {
-                        titleElement.textContent = customTitle;
+                  // Also listen for navigation events
+                  let lastPath = window.location.pathname;
+                  
+                  // Check for path changes periodically
+                  setInterval(async () => {
+                    if (window.location.pathname !== lastPath) {
+                      lastPath = window.location.pathname;
+                      const regex = new RegExp(pattern);
+                      const testPath = lastPath + (lastPath.endsWith('/') ? '' : '/');
+                      
+                      if (regex.test(testPath)) {
+                        const title = await fetchTitleForPath(lastPath);
+                        if (title) {
+                          document.title = title;
+                        }
                       }
-                    });
-                    observer.observe(titleElement, { childList: true, characterData: true, subtree: true });
+                    }
+                  }, 100);
+                })();
+              </script>
+            `, { html: true });
+          }
+        });
+      } else {
+        // No pattern match, inject a simpler script that handles all navigation
+        rewriter.on('head', {
+          element(element) {
+            element.append(`
+              <script>
+                (function() {
+                  const patterns = ${JSON.stringify(config.patterns)};
+                  
+                  // Function to fetch metadata for a given path
+                  async function fetchTitleForPath(pathname) {
+                    try {
+                      // Find matching pattern
+                      for (const patternConfig of patterns) {
+                        const regex = new RegExp(patternConfig.pattern);
+                        const testPath = pathname + (pathname.endsWith('/') ? '' : '/');
+                        if (regex.test(testPath)) {
+                          // Extract ID from path
+                          const trimmedUrl = pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
+                          const parts = trimmedUrl.split('/');
+                          const id = parts[parts.length - 1];
+                          
+                          // Build metadata URL
+                          const metaUrl = patternConfig.metaDataEndpoint.replace(/{[^}]+}/, id);
+                          
+                          // Fetch metadata
+                          const response = await fetch(metaUrl);
+                          const metadata = await response.json();
+                          return metadata.title;
+                        }
+                      }
+                      return null;
+                    } catch (e) {
+                      console.error('Error fetching title:', e);
+                      return null;
+                    }
                   }
+                  
+                  // Listen for navigation
+                  let lastPath = window.location.pathname;
+                  
+                  setInterval(async () => {
+                    if (window.location.pathname !== lastPath) {
+                      lastPath = window.location.pathname;
+                      const title = await fetchTitleForPath(lastPath);
+                      if (title) {
+                        document.title = title;
+                      }
+                    }
+                  }, 100);
                 })();
               </script>
             `, { html: true });
