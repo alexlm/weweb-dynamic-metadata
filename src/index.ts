@@ -10,22 +10,24 @@ export default {
     
     // Check if this is the initial page request (not an asset)
     const isPageRequest = !url.pathname.includes('/assets/') && 
-                         !url.pathname.includes('/public/') &&
                          !url.pathname.includes('/fonts/') &&
                          !url.pathname.includes('/images/') &&
                          !url.pathname.endsWith('.js') &&
                          !url.pathname.endsWith('.css') &&
-                         !url.pathname.endsWith('.json') &&
                          !url.pathname.endsWith('.png') &&
                          !url.pathname.endsWith('.jpg') &&
                          !url.pathname.endsWith('.ico');
+    
+    // Check if this is a page data JSON request
+    const isPageDataRequest = /\/public\/data\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json/.test(url.pathname);
     
     console.log("Request:", url.pathname);
     console.log("Is Bot:", isBot);
     console.log("Is Page Request:", isPageRequest);
     
     // For non-page requests (assets, API calls, etc.), redirect to WeWeb directly
-    if (!isPageRequest) {
+    // EXCEPT for page data JSON files which we need to modify
+    if (!isPageRequest && !isPageDataRequest) {
       console.log("Asset request, redirecting to WeWeb");
       return Response.redirect(`${config.domainSource}${url.pathname}${url.search}`, 302);
     }
@@ -58,6 +60,74 @@ export default {
     // For page requests, fetch and process
     const originUrl = `${config.domainSource}${url.pathname}${url.search}`;
     const response = await fetch(originUrl);
+    
+    // Handle page data JSON requests
+    if (isPageDataRequest) {
+      console.log("Page data JSON detected:", url.pathname);
+      const referer = request.headers.get('Referer');
+      
+      // Extract the pathname from the referer
+      let pathname = null;
+      if (referer) {
+        try {
+          const refererUrl = new URL(referer);
+          pathname = refererUrl.pathname;
+        } catch (e) {
+          console.error("Invalid referer URL:", referer);
+        }
+      }
+      
+      if (pathname) {
+        const patternConfig = getPatternConfig(pathname);
+        if (patternConfig) {
+          try {
+            const metadata = await requestMetadata(pathname, patternConfig.metaDataEndpoint);
+            console.log("Metadata fetched for JSON:", metadata);
+            
+            // Parse and modify the JSON
+            let jsonData = await response.json();
+            
+            // Ensure nested objects exist
+            jsonData.page = jsonData.page || {};
+            jsonData.page.title = jsonData.page.title || {};
+            jsonData.page.meta = jsonData.page.meta || {};
+            jsonData.page.meta.desc = jsonData.page.meta.desc || {};
+            jsonData.page.socialTitle = jsonData.page.socialTitle || {};
+            jsonData.page.socialDesc = jsonData.page.socialDesc || {};
+            
+            // Update with metadata
+            if (metadata.title) {
+              jsonData.page.title.en = metadata.title;
+              jsonData.page.title.fr = metadata.title; // Also set French
+              jsonData.page.socialTitle.en = metadata.title;
+              jsonData.page.socialTitle.fr = metadata.title;
+            }
+            if (metadata.description) {
+              jsonData.page.meta.desc.en = metadata.description;
+              jsonData.page.meta.desc.fr = metadata.description;
+              jsonData.page.socialDesc.en = metadata.description;
+              jsonData.page.socialDesc.fr = metadata.description;
+            }
+            if (metadata.image) {
+              jsonData.page.metaImage = metadata.image;
+            }
+            
+            // Return modified JSON
+            return new Response(JSON.stringify(jsonData), {
+              headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-cache'
+              }
+            });
+          } catch (e) {
+            console.error("Error processing page data:", e);
+          }
+        }
+      }
+      
+      // If no pattern match or error, return original response
+      return response;
+    }
     
     // If not HTML, just return it
     const contentType = response.headers.get('Content-Type') || '';
