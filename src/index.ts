@@ -30,55 +30,7 @@ export default {
       return Response.redirect(`${config.domainSource}${url.pathname}${url.search}`, 302);
     }
     
-    // For page requests, fetch and process
-    const originUrl = `${config.domainSource}${url.pathname}${url.search}`;
-    const response = await fetch(originUrl);
-    
-    // If not HTML, just return it
-    const contentType = response.headers.get('Content-Type') || '';
-    if (!contentType.includes('text/html')) {
-      return response;
-    }
-    
-    // For regular users (not bots), return a modified HTML that loads directly from WeWeb
-    if (!isBot) {
-      console.log("Regular user, modifying base URL");
-      
-      // Rewrite the HTML to use absolute URLs pointing to WeWeb
-      const rewriter = new HTMLRewriter()
-        .on('base', {
-          element(element) {
-            // Update the base href to point to WeWeb
-            element.setAttribute('href', config.domainSource + '/');
-          }
-        })
-        .on('script[src], link[href]', {
-          element(element) {
-            const src = element.getAttribute('src');
-            const href = element.getAttribute('href');
-            
-            if (src && src.startsWith('/')) {
-              element.setAttribute('src', config.domainSource + src);
-            }
-            if (href && href.startsWith('/') && !href.startsWith('//')) {
-              element.setAttribute('href', config.domainSource + href);
-            }
-          }
-        });
-      
-      const headers = new Headers(response.headers);
-      headers.delete('X-Robots-Tag');
-      
-      return rewriter.transform(new Response(response.body, {
-        status: response.status,
-        headers: headers
-      }));
-    }
-    
-    // For bots, apply metadata transformations
-    console.log("Bot detected, checking for pattern match");
-    
-    // Function to get the pattern configuration that matches the URL
+    // Helper functions
     function getPatternConfig(pathname) {
       for (const patternConfig of config.patterns) {
         const regex = new RegExp(patternConfig.pattern);
@@ -102,6 +54,76 @@ export default {
       const metadata = await metaDataResponse.json();
       return metadata;
     }
+    
+    // For page requests, fetch and process
+    const originUrl = `${config.domainSource}${url.pathname}${url.search}`;
+    const response = await fetch(originUrl);
+    
+    // If not HTML, just return it
+    const contentType = response.headers.get('Content-Type') || '';
+    if (!contentType.includes('text/html')) {
+      return response;
+    }
+    
+    // For regular users (not bots), return a modified HTML that loads directly from WeWeb
+    if (!isBot) {
+      console.log("Regular user, modifying base URL and checking for title update");
+      
+      // Check if we need to update the title
+      const patternConfig = getPatternConfig(url.pathname);
+      let titleMetadata = null;
+      
+      if (patternConfig) {
+        try {
+          titleMetadata = await requestMetadata(url.pathname, patternConfig.metaDataEndpoint);
+          console.log("Title metadata fetched for regular user:", titleMetadata.title);
+        } catch (e) {
+          console.error("Error fetching metadata:", e);
+        }
+      }
+      
+      // Rewrite the HTML to use absolute URLs pointing to WeWeb
+      const rewriter = new HTMLRewriter()
+        .on('base', {
+          element(element) {
+            // Update the base href to point to WeWeb
+            element.setAttribute('href', config.domainSource + '/');
+          }
+        })
+        .on('script[src], link[href]', {
+          element(element) {
+            const src = element.getAttribute('src');
+            const href = element.getAttribute('href');
+            
+            if (src && src.startsWith('/')) {
+              element.setAttribute('src', config.domainSource + src);
+            }
+            if (href && href.startsWith('/') && !href.startsWith('//')) {
+              element.setAttribute('href', config.domainSource + href);
+            }
+          }
+        });
+      
+      // Add title transformation if we have metadata
+      if (titleMetadata && titleMetadata.title) {
+        rewriter.on('title', {
+          element(element) {
+            element.setInnerContent(titleMetadata.title);
+          }
+        });
+      }
+      
+      const headers = new Headers(response.headers);
+      headers.delete('X-Robots-Tag');
+      
+      return rewriter.transform(new Response(response.body, {
+        status: response.status,
+        headers: headers
+      }));
+    }
+    
+    // For bots, apply metadata transformations
+    console.log("Bot detected, checking for pattern match");
     
     const patternConfig = getPatternConfig(url.pathname);
     
