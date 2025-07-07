@@ -28,9 +28,13 @@ export default {
     // For non-page requests (assets, API calls, etc.), redirect to WeWeb directly
     // EXCEPT for page data JSON files which we need to modify
     if (!isPageRequest && !isPageDataRequest) {
-      console.log("Asset request, redirecting to WeWeb");
+      console.log("Asset request, redirecting to WeWeb:", url.pathname);
       return Response.redirect(`${config.domainSource}${url.pathname}${url.search}`, 302);
     }
+    
+    console.log("Processing request:", url.pathname);
+    console.log("Is page request:", isPageRequest);
+    console.log("Is page data request:", isPageDataRequest);
     
     // Helper functions
     function getPatternConfig(pathname) {
@@ -179,6 +183,41 @@ export default {
         rewriter.on('title', {
           element(element) {
             element.setInnerContent(titleMetadata.title);
+          }
+        });
+        
+        // Inject a script to maintain the title
+        rewriter.on('head', {
+          element(element) {
+            element.append(`
+              <script>
+                (function() {
+                  const customTitle = ${JSON.stringify(titleMetadata.title)};
+                  // Set title immediately
+                  document.title = customTitle;
+                  
+                  // Override the title property to prevent changes
+                  Object.defineProperty(document, 'title', {
+                    get: function() { return customTitle; },
+                    set: function(newTitle) { 
+                      console.log('Attempted to set title to:', newTitle, 'but keeping:', customTitle);
+                      return customTitle; 
+                    }
+                  });
+                  
+                  // Also watch for changes with MutationObserver as a backup
+                  const titleElement = document.querySelector('title');
+                  if (titleElement) {
+                    const observer = new MutationObserver(function() {
+                      if (titleElement.textContent !== customTitle) {
+                        titleElement.textContent = customTitle;
+                      }
+                    });
+                    observer.observe(titleElement, { childList: true, characterData: true, subtree: true });
+                  }
+                })();
+              </script>
+            `, { html: true });
           }
         });
       }
