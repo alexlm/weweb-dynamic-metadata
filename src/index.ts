@@ -5,46 +5,74 @@ export default {
     const url = new URL(request.url);
     const userAgent = request.headers.get('User-Agent') || '';
     
-    // Always fetch from the WeWeb preview domain
+    // Check if this is a bot/crawler request
+    const isBot = /bot|crawler|spider|crawling|facebookexternalhit|whatsapp|telegram|twitter|pinterest|linkedin|slack|discord/i.test(userAgent);
+    
+    // Check if this is the initial page request (not an asset)
+    const isPageRequest = !url.pathname.includes('/assets/') && 
+                         !url.pathname.includes('/public/') &&
+                         !url.pathname.includes('/fonts/') &&
+                         !url.pathname.includes('/images/') &&
+                         !url.pathname.endsWith('.js') &&
+                         !url.pathname.endsWith('.css') &&
+                         !url.pathname.endsWith('.json') &&
+                         !url.pathname.endsWith('.png') &&
+                         !url.pathname.endsWith('.jpg') &&
+                         !url.pathname.endsWith('.ico');
+    
+    console.log("Request:", url.pathname);
+    console.log("Is Bot:", isBot);
+    console.log("Is Page Request:", isPageRequest);
+    
+    // For non-page requests (assets, API calls, etc.), redirect to WeWeb directly
+    if (!isPageRequest) {
+      console.log("Asset request, redirecting to WeWeb");
+      return Response.redirect(`${config.domainSource}${url.pathname}${url.search}`, 302);
+    }
+    
+    // For page requests, fetch and process
     const originUrl = `${config.domainSource}${url.pathname}${url.search}`;
+    const response = await fetch(originUrl);
     
-    console.log("Request for:", url.pathname);
-    console.log("Fetching from:", originUrl);
-    
-    // Fetch from origin
-    const response = await fetch(originUrl, {
-      method: request.method,
-      headers: {
-        ...Object.fromEntries(request.headers.entries()),
-        'Host': new URL(config.domainSource).host,
-        'Origin': config.domainSource,
-        'Referer': config.domainSource + '/'
-      },
-      body: request.body
-    });
-    
-    // Get content type
+    // If not HTML, just return it
     const contentType = response.headers.get('Content-Type') || '';
-    
-    // For non-HTML responses, pass through as-is
     if (!contentType.includes('text/html')) {
-      console.log("Non-HTML content, passing through:", url.pathname);
       return response;
     }
     
-    // For HTML responses, check if it's a bot
-    const isBot = /bot|crawler|spider|crawling|facebookexternalhit|whatsapp|telegram|twitter|pinterest|linkedin|slack|discord/i.test(userAgent);
-    
-    console.log("HTML response, Is Bot:", isBot);
-    
-    // If not a bot, just pass through with modified headers
+    // For regular users (not bots), return a modified HTML that loads directly from WeWeb
     if (!isBot) {
+      console.log("Regular user, modifying base URL");
+      
+      // Rewrite the HTML to use absolute URLs pointing to WeWeb
+      const rewriter = new HTMLRewriter()
+        .on('base', {
+          element(element) {
+            // Update the base href to point to WeWeb
+            element.setAttribute('href', config.domainSource + '/');
+          }
+        })
+        .on('script[src], link[href]', {
+          element(element) {
+            const src = element.getAttribute('src');
+            const href = element.getAttribute('href');
+            
+            if (src && src.startsWith('/')) {
+              element.setAttribute('src', config.domainSource + src);
+            }
+            if (href && href.startsWith('/') && !href.startsWith('//')) {
+              element.setAttribute('href', config.domainSource + href);
+            }
+          }
+        });
+      
       const headers = new Headers(response.headers);
       headers.delete('X-Robots-Tag');
-      return new Response(response.body, {
+      
+      return rewriter.transform(new Response(response.body, {
         status: response.status,
         headers: headers
-      });
+      }));
     }
     
     // For bots, apply metadata transformations
