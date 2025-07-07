@@ -2,19 +2,35 @@ import { config } from '../config.js';
 
 export default {
   async fetch(request, env, ctx) {
-    // Extracting configuration values
-    const domainSource = config.domainSource;
-    const patterns = config.patterns;
-
-    console.log("Worker started");
-
-    // Parse the request URL
     const url = new URL(request.url);
-    const referer = request.headers.get('Referer')
+    const userAgent = request.headers.get('User-Agent') || '';
+    
+    // Check if this is a bot/crawler request
+    const isBot = /bot|crawler|spider|crawling|facebookexternalhit|whatsapp|telegram|twitter|pinterest|linkedin|slack|discord/i.test(userAgent);
+    
+    console.log("Request for:", url.pathname);
+    console.log("User-Agent:", userAgent);
+    console.log("Is Bot:", isBot);
+    
+    // For non-bot requests, just pass through to origin
+    if (!isBot) {
+      console.log("Regular user, passing through to origin");
+      return fetch(`${config.domainSource}${url.pathname}${url.search}`, {
+        headers: request.headers,
+        method: request.method,
+        body: request.body
+      });
+    }
+    
+    // For bot requests, apply metadata modifications
+    console.log("Bot detected, applying metadata modifications");
+    
+    // Parse the request URL
+    const referer = request.headers.get('Referer');
 
     // Function to get the pattern configuration that matches the URL
     function getPatternConfig(url) {
-      for (const patternConfig of patterns) {
+      for (const patternConfig of config.patterns) {
         const regex = new RegExp(patternConfig.pattern);
         let pathname = url + (url.endsWith('/') ? '' : '/');
         if (regex.test(pathname)) {
@@ -48,13 +64,13 @@ export default {
       return metadata;
     }
 
-    // Handle dynamic page requests
+    // Handle dynamic page requests for bots
     const patternConfig = getPatternConfig(url.pathname);
     if (patternConfig) {
-      console.log("Dynamic page detected:", url.pathname);
+      console.log("Dynamic page detected for bot:", url.pathname);
 
-      // Fetch the source page content - FIXED: Don't pass the request object
-      let source = await fetch(`${domainSource}${url.pathname}${url.search}`);
+      // Fetch the source page content
+      let source = await fetch(`${config.domainSource}${url.pathname}${url.search}`);
 
       // Remove "X-Robots-Tag" from the headers
       const sourceHeaders = new Headers(source.headers);
@@ -77,11 +93,11 @@ export default {
 
     // Handle page data requests for the WeWeb app
     } else if (isPageData(url.pathname)) {
-      	console.log("Page data detected:", url.pathname);
-	console.log("Referer:", referer);
+      console.log("Page data detected:", url.pathname);
+      console.log("Referer:", referer);
 
       // Fetch the source data content
-      const sourceResponse = await fetch(`${domainSource}${url.pathname}`);
+      const sourceResponse = await fetch(`${config.domainSource}${url.pathname}`);
       let sourceData = await sourceResponse.json();
 
       let pathname = referer;
@@ -117,7 +133,7 @@ export default {
             sourceData.page.meta.keywords.en = metadata.keywords;
           }
 
-	  console.log("returning file: ", JSON.stringify(sourceData));
+          console.log("returning file: ", JSON.stringify(sourceData));
           // Return the modified JSON object
           return new Response(JSON.stringify(sourceData), {
             headers: { 'Content-Type': 'application/json' }
@@ -126,20 +142,16 @@ export default {
       }
     }
 
-    // If the URL does not match any patterns, fetch and return the original content
-    console.log("Fetching original content for:", url.pathname);
-    
-    // Handle all requests - including assets, API calls, etc.
-    const sourceUrl = `${domainSource}${url.pathname}${url.search}`;
+    // For all other bot requests, just pass through
+    console.log("Fetching original content for bot:", url.pathname);
+    const sourceUrl = `${config.domainSource}${url.pathname}${url.search}`;
     const sourceResponse = await fetch(sourceUrl);
     
     // Get the content type
     const contentType = sourceResponse.headers.get('Content-Type') || '';
     
     // Only remove X-Robots-Tag for HTML responses
-    // For CSS, JS, and other assets, return them as-is
     if (!contentType.includes('text/html')) {
-      console.log("Non-HTML content, passing through as-is:", url.pathname, contentType);
       return sourceResponse;
     }
 
@@ -225,7 +237,6 @@ class CustomHeaderHandler {
         console.log('Removing noindex tag');
         element.remove();
       }
-	    
     }
   }
 }
