@@ -5,163 +5,107 @@ export default {
     const url = new URL(request.url);
     const userAgent = request.headers.get('User-Agent') || '';
     
-    // Check if this is a bot/crawler request
-    const isBot = /bot|crawler|spider|crawling|facebookexternalhit|whatsapp|telegram|twitter|pinterest|linkedin|slack|discord/i.test(userAgent);
+    // Always fetch from the WeWeb preview domain
+    const originUrl = `${config.domainSource}${url.pathname}${url.search}`;
     
     console.log("Request for:", url.pathname);
-    console.log("User-Agent:", userAgent);
-    console.log("Is Bot:", isBot);
+    console.log("Fetching from:", originUrl);
     
-    // For non-bot requests, just pass through to origin
+    // Fetch from origin
+    const response = await fetch(originUrl, {
+      method: request.method,
+      headers: {
+        ...Object.fromEntries(request.headers.entries()),
+        'Host': new URL(config.domainSource).host,
+        'Origin': config.domainSource,
+        'Referer': config.domainSource + '/'
+      },
+      body: request.body
+    });
+    
+    // Get content type
+    const contentType = response.headers.get('Content-Type') || '';
+    
+    // For non-HTML responses, pass through as-is
+    if (!contentType.includes('text/html')) {
+      console.log("Non-HTML content, passing through:", url.pathname);
+      return response;
+    }
+    
+    // For HTML responses, check if it's a bot
+    const isBot = /bot|crawler|spider|crawling|facebookexternalhit|whatsapp|telegram|twitter|pinterest|linkedin|slack|discord/i.test(userAgent);
+    
+    console.log("HTML response, Is Bot:", isBot);
+    
+    // If not a bot, just pass through with modified headers
     if (!isBot) {
-      console.log("Regular user, passing through to origin");
-      return fetch(`${config.domainSource}${url.pathname}${url.search}`, {
-        headers: request.headers,
-        method: request.method,
-        body: request.body
+      const headers = new Headers(response.headers);
+      headers.delete('X-Robots-Tag');
+      return new Response(response.body, {
+        status: response.status,
+        headers: headers
       });
     }
     
-    // For bot requests, apply metadata modifications
-    console.log("Bot detected, applying metadata modifications");
+    // For bots, apply metadata transformations
+    console.log("Bot detected, checking for pattern match");
     
-    // Parse the request URL
-    const referer = request.headers.get('Referer');
-
     // Function to get the pattern configuration that matches the URL
-    function getPatternConfig(url) {
+    function getPatternConfig(pathname) {
       for (const patternConfig of config.patterns) {
         const regex = new RegExp(patternConfig.pattern);
-        let pathname = url + (url.endsWith('/') ? '' : '/');
-        if (regex.test(pathname)) {
+        let testPath = pathname + (pathname.endsWith('/') ? '' : '/');
+        if (regex.test(testPath)) {
           return patternConfig;
         }
       }
       return null;
     }
-
-    // Function to check if the URL matches the page data pattern (For the WeWeb app)
-    function isPageData(url) {
-      const pattern = /\/public\/data\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json/;
-      return pattern.test(url);
-    }
-
-    async function requestMetadata(url, metaDataEndpoint) {
-      // Remove any trailing slash from the URL
-      const trimmedUrl = url.endsWith('/') ? url.slice(0, -1) : url;
     
-      // Split the trimmed URL by '/' and get the last part: The id
+    async function requestMetadata(pathname, metaDataEndpoint) {
+      const trimmedUrl = pathname.endsWith('/') ? pathname.slice(0, -1) : pathname;
       const parts = trimmedUrl.split('/');
       const id = parts[parts.length - 1];
-    
-      // Replace the placeholder in metaDataEndpoint with the actual id
+      
       const placeholderPattern = /{([^}]+)}/;
       const metaDataEndpointWithId = metaDataEndpoint.replace(placeholderPattern, id);
-    
-      // Fetch metadata from the API endpoint
+      
       const metaDataResponse = await fetch(metaDataEndpointWithId);
       const metadata = await metaDataResponse.json();
       return metadata;
     }
-
-    // Handle dynamic page requests for bots
+    
     const patternConfig = getPatternConfig(url.pathname);
+    
     if (patternConfig) {
-      console.log("Dynamic page detected for bot:", url.pathname);
-
-      // Fetch the source page content
-      let source = await fetch(`${config.domainSource}${url.pathname}${url.search}`);
-
-      // Remove "X-Robots-Tag" from the headers
-      const sourceHeaders = new Headers(source.headers);
-      sourceHeaders.delete('X-Robots-Tag');
-      source = new Response(source.body, {
-        status: source.status,
-        headers: sourceHeaders
-      });
-
+      console.log("Pattern matched, fetching metadata");
+      
       const metadata = await requestMetadata(url.pathname, patternConfig.metaDataEndpoint);
       console.log("Metadata fetched:", metadata);
-
-      // Create a custom header handler with the fetched metadata
+      
+      // Remove X-Robots-Tag
+      const headers = new Headers(response.headers);
+      headers.delete('X-Robots-Tag');
+      
+      // Create response with modified headers
+      const modifiedResponse = new Response(response.body, {
+        status: response.status,
+        headers: headers
+      });
+      
+      // Apply metadata transformations
       const customHeaderHandler = new CustomHeaderHandler(metadata);
-
-      // Transform the source HTML with the custom headers
       return new HTMLRewriter()
         .on('*', customHeaderHandler)
-        .transform(source);
-
-    // Handle page data requests for the WeWeb app
-    } else if (isPageData(url.pathname)) {
-      console.log("Page data detected:", url.pathname);
-      console.log("Referer:", referer);
-
-      // Fetch the source data content
-      const sourceResponse = await fetch(`${config.domainSource}${url.pathname}`);
-      let sourceData = await sourceResponse.json();
-
-      let pathname = referer;
-      pathname = pathname ? pathname + (pathname.endsWith('/') ? '' : '/') : null;
-      if (pathname !== null) {
-        const patternConfigForPageData = getPatternConfig(pathname);
-        if (patternConfigForPageData) {
-          const metadata = await requestMetadata(pathname, patternConfigForPageData.metaDataEndpoint);
-          console.log("Metadata fetched:", metadata);
-
-          // Ensure nested objects exist in the source data
-          sourceData.page = sourceData.page || {};
-          sourceData.page.title = sourceData.page.title || {};
-          sourceData.page.meta = sourceData.page.meta || {};
-          sourceData.page.meta.desc = sourceData.page.meta.desc || {};
-          sourceData.page.meta.keywords = sourceData.page.meta.keywords || {};
-          sourceData.page.socialTitle = sourceData.page.socialTitle || {};
-          sourceData.page.socialDesc = sourceData.page.socialDesc || {};
-
-          // Update source data with the fetched metadata
-          if (metadata.title) {
-            sourceData.page.title.en = metadata.title;
-            sourceData.page.socialTitle.en = metadata.title;
-          }
-          if (metadata.description) {
-            sourceData.page.meta.desc.en = metadata.description;
-            sourceData.page.socialDesc.en = metadata.description;
-          }
-          if (metadata.image) {
-            sourceData.page.metaImage = metadata.image;
-          }
-          if (metadata.keywords) {
-            sourceData.page.meta.keywords.en = metadata.keywords;
-          }
-
-          console.log("returning file: ", JSON.stringify(sourceData));
-          // Return the modified JSON object
-          return new Response(JSON.stringify(sourceData), {
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-      }
+        .transform(modifiedResponse);
     }
-
-    // For all other bot requests, just pass through
-    console.log("Fetching original content for bot:", url.pathname);
-    const sourceUrl = `${config.domainSource}${url.pathname}${url.search}`;
-    const sourceResponse = await fetch(sourceUrl);
     
-    // Get the content type
-    const contentType = sourceResponse.headers.get('Content-Type') || '';
-    
-    // Only remove X-Robots-Tag for HTML responses
-    if (!contentType.includes('text/html')) {
-      return sourceResponse;
-    }
-
-    // For HTML responses, remove the X-Robots-Tag header
-    const modifiedHeaders = new Headers(sourceResponse.headers);
-    modifiedHeaders.delete('X-Robots-Tag');
-
-    return new Response(sourceResponse.body, {
-      status: sourceResponse.status,
-      headers: modifiedHeaders,
+    // No pattern match for bot, just remove X-Robots-Tag
+    const headers = new Headers(response.headers);
+    headers.delete('X-Robots-Tag');
+    return new Response(response.body, {
+      status: response.status,
+      headers: headers
     });
   }
 };
