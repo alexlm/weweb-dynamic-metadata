@@ -6,7 +6,16 @@ export default {
     const userAgent = request.headers.get('User-Agent') || '';
     
     // Check if this is a bot/crawler request
-    const isBot = /bot|crawler|spider|crawling|facebookexternalhit|whatsapp|telegram|twitter|pinterest|linkedin|slack|discord/i.test(userAgent);
+    // Note: LinkedIn in-app browser should NOT be treated as a bot
+    const isBot = /bot|crawler|spider|crawling|facebookexternalhit|whatsapp|telegram|twitter|pinterest|slack|discord/i.test(userAgent) 
+                  && !/LinkedIn/.test(userAgent);  // Exclude LinkedIn app browser
+    
+    // Log the user agent for debugging
+    console.log("User-Agent:", userAgent);
+    console.log("Is Bot:", isBot);
+    
+    // Specifically check for LinkedIn in-app browser
+    const isLinkedInBrowser = /LinkedIn/i.test(userAgent);
     
     // Check if this is the initial page request (not an asset)
     const isPageRequest = !url.pathname.includes('/assets/') && 
@@ -23,12 +32,20 @@ export default {
     
     console.log("Request:", url.pathname);
     console.log("Is Bot:", isBot);
+    console.log("Is LinkedIn Browser:", isLinkedInBrowser);
     console.log("Is Page Request:", isPageRequest);
     
     // For non-page requests (assets, API calls, etc.), redirect to WeWeb directly
     // EXCEPT for page data JSON files which we need to modify
     if (!isPageRequest && !isPageDataRequest) {
       console.log("Asset request, redirecting to WeWeb:", url.pathname);
+      
+      // LinkedIn browser might have issues with redirects, so proxy instead
+      if (isLinkedInBrowser) {
+        console.log("LinkedIn browser detected, proxying asset instead of redirecting");
+        return fetch(`${config.domainSource}${url.pathname}${url.search}`);
+      }
+      
       return Response.redirect(`${config.domainSource}${url.pathname}${url.search}`, 302);
     }
     
@@ -156,7 +173,35 @@ export default {
         }
       }
       
-      // Rewrite the HTML to use absolute URLs pointing to WeWeb
+      // For LinkedIn browser, use a simpler approach without complex URL rewriting
+      if (isLinkedInBrowser) {
+        console.log("LinkedIn browser - using simplified response");
+        
+        const headers = new Headers(response.headers);
+        headers.delete('X-Robots-Tag');
+        
+        // Only modify the title if we have metadata
+        if (titleMetadata && titleMetadata.title) {
+          const rewriter = new HTMLRewriter()
+            .on('title', {
+              element(element) {
+                element.setInnerContent(titleMetadata.title);
+              }
+            });
+          
+          return rewriter.transform(new Response(response.body, {
+            status: response.status,
+            headers: headers
+          }));
+        }
+        
+        return new Response(response.body, {
+          status: response.status,
+          headers: headers
+        });
+      }
+      
+      // Regular browser - use full URL rewriting approach
       const rewriter = new HTMLRewriter()
         .on('base', {
           element(element) {
